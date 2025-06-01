@@ -1,9 +1,10 @@
-use super::storage::Column;
-use crate::cache::HybridCache;
+use super::{storage::Column, cache::HybridCache};
+use crate::ColumnBuilder;
 use crossbeam::channel::{bounded, Sender};
 use std::{
     sync::{Arc, Mutex},
-    thread
+    thread,
+    time::Duration
 };
 
 pub struct Prefetcher {
@@ -12,7 +13,7 @@ pub struct Prefetcher {
 
 impl Prefetcher {
     pub fn new(column: Arc<Column>, cache: Arc<Mutex<HybridCache>>) -> Self {
-        let (sender, receiver) = bounded(10);
+        let (sender, receiver) = bounded::<String>(10);
 
         thread::spawn(move || {
             while let Ok(col_name) = receiver.recv() {
@@ -31,19 +32,30 @@ impl Prefetcher {
         let _ = self.sender.send(column_name);
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_prefetch_mechanism() {
-        let test_column = Arc::new(MemColumn::new());
+        // Создаем тестовую колонку
+        let data = vec![1i32, 2, 3];
+        let bytes: Vec<u8> = data.iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        
+        let column = ColumnBuilder::new("test_col".to_string(), bytes)
+            .build(NamedTempFile::new().unwrap().path())
+            .unwrap();
+        
+        let column = Arc::new(column);
         let cache = Arc::new(Mutex::new(HybridCache::new(100)));
         
-        let prefetcher = Prefetcher::new(test_column.clone(), cache.clone());
+        let prefetcher = Prefetcher::new(column.clone(), cache.clone());
         
-        // Запуск предзагрузки
+        // Запускаем предзагрузку
         prefetcher.schedule_prefetch("test_col".to_string());
         
         // Даем время на обработку
